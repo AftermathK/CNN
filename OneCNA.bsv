@@ -1,23 +1,24 @@
+
 package OneCNA;
 import Vector::*;
+import SpecialFIFOs::*;
 import FIFOF::*;
 
 typedef 4 KERNEL_SIZE;
-typedef 5 QUEUE_VECTOR_SIZE; //must be +1 greater than KERNEL_SIZE
-typedef 2 ADDER_LEAF_COUNT; //the number of queues in our tree's leaves--must always be KERNEL_SIZE/2
 typedef Bit#(32) OperandType;
 
 interface OneCNA;
-        method Action request(OperandType req);
+        method Action initHorizontal; 
+	method Action request(OperandType req);
         method ActionValue#(OperandType) response;
 
 endinterface
 module mkOneCNA(OneCNA);
-
+	//if initializing
+	Reg#(Bool) isInit <- mkReg(True);
         //horizontal queue vector
-        Vector#(KERNEL_SIZE, FIFOF#(OperandType)) horizontalStream <- replicateM(mkSizedFIFOF(1));
-	//initialize the horizontalStream to 0
-	Integer initValue = 0;
+        Vector#(KERNEL_SIZE, FIFOF#(OperandType)) horizontalStream <- replicateM(mkLFIFOF);
+		
         //depth of the adder tree
         Integer depthSize = log2(valueOf(KERNEL_SIZE));
        	
@@ -29,25 +30,27 @@ module mkOneCNA(OneCNA);
 	
 	//tree queue vector of vectors-may seem as a waste of space but compiler will handle 
         //the optimizations
-        Vector#(TLog(KERNEL_SIZE), Vector#(KERNEL_SIZE, FIFOF#(OperandType))) adderTree <- replicateM(replicateM(mkSizedFIFOF(1))); 
-            
+        Vector#(TAdd#(TLog#(KERNEL_SIZE),1), Vector#(KERNEL_SIZE, FIFOF#(OperandType))) adderTree;
+        for(Integer m=0; m<=log2(valueOf(KERNEL_SIZE)); m=m+1) begin
+		adderTree[m] <-replicateM(mkLFIFOF);
+	end
+	    
 
 
 	//construct the adder trees rules 
-        Integer addRange = valueOf(KERNEL_SIZE)/2; //how far will we have to do allow a level to add all the numbers
-	//second index for inner loop (helps choose the correct sets to add)
-	Integer secondSet = 0;
+       	Integer currentPower = valueOf(KERNEL_SIZE);
+	Integer addRange = currentPower-2; //how far will we have to do allow a level to add all the numbers
         for(Integer i=0; i<depthSize; i=i+1) begin
-	    secondSet = 0;
             for(Integer j=0; j <= addRange; j=j+2) begin
 		rule adderTreeRules;
-                    $display("Pushing in %d at level: %d in FIFO: %d", adderTree[i][j].first() + adderTree[i][j+1].first(), i+1,j/2);
+                    //$display("Pushing in %d at level: %d in FIFO: %d", adderTree[i][j].first() + adderTree[i][j+1].first(), i+1,j/2);
                     adderTree[i+1][j/2].enq(adderTree[i][j].first() + adderTree[i][j+1].first());
                     adderTree[i][j].deq();
                     adderTree[i][j+1].deq();
                 endrule
             end
-	    addRange = addRange/2;
+	    currentPower = currentPower/2;
+	    addRange = currentPower-2;
         end 
             
         //create all of the rules needed for the top horizontal stream
@@ -57,15 +60,15 @@ module mkOneCNA(OneCNA);
 			    //$display("Dequeuing from FIFO: %d", i);
                             //perform multiplications needed here
                             adderTree[0][i].enq(horizontalStream[i].first()*kernel[i]); 
-		    	    $display("Pushing %d into adder tree [0, %d]", horizontalStream[i].first()*kernel[i], i);
+		    	    //$display("Pushing %d into adder tree [0, %d]", horizontalStream[i].first()*kernel[i], i);
                             horizontalStream[i].deq();
                         end
                         else begin
-                            $display("Pushing %d into FIFO: %d", horizontalStream[i].first(),i+1);
+                            //$display("Pushing %d into FIFO: %d", horizontalStream[i].first(),i+1);
 			    //$display("Dequeuing from FIFO: %d", i);
                             horizontalStream[i+1].enq(horizontalStream[i].first());
                             //perform multiplications needed here
-		    	    $display("Pushing %d into adder tree [0, %d]", horizontalStream[i].first()*kernel[i], i);
+		    	    //$display("Pushing %d into adder tree [0, %d]", horizontalStream[i].first()*kernel[i], i);
                             adderTree[0][i].enq(horizontalStream[i].first()*kernel[i]); 
                             horizontalStream[i].deq();
                         end
@@ -76,10 +79,13 @@ module mkOneCNA(OneCNA);
                     
 
         //shift a new value into the currentStream every CC
-            
-        //this rule should enqueue from first queue into the second queue and also multiplied
+	method Action initHorizontal();
+		for(Integer i=0; i<valueOf(KERNEL_SIZE); i=i+1) begin
+			horizontalStream[i].enq(0);
+		end		
+	endmethod            
         //methods for interaction with accelerator
-        method Action request(OperandType req);
+	method Action request(OperandType req);
 		horizontalStream[0].enq(req);  
         endmethod
 
@@ -90,5 +96,3 @@ module mkOneCNA(OneCNA);
         endmethod           
 endmodule
 endpackage
-
-
