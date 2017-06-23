@@ -1,13 +1,15 @@
 import Vector::*;
 import OneCNA::*;
-
+typedef 7 OFFSET;
+typedef 4 KERNEL_SIZE;
+typedef Bit#(32) OperandType;
 module mkTbOneCNA();
 	Reg#(Bit#(64)) cycles <- mkReg(0);
 	Reg#(Bit#(64)) requests <- mkReg(0);
 	Reg#(Bool) isInit <- mkReg(True);	
         //kernel
         Vector#(KERNEL_SIZE, OperandType) kernel; //adjust later 
-		
+	//kernel pattern	
 	kernel[0] = 0;
 	kernel[1] = 1;
 	kernel[2] = 2;
@@ -32,24 +34,29 @@ module mkTbOneCNA();
 	operations[6] = 59;
 	operations[7] = 99;
 	operations[8] = 35;
-	operations[8] = 83;
+	operations[9] = 83;
 	
 	//test cases
+	//initialize the vector to 0
+	for(Integer j=0;j<1012;j=j+1) begin
+			correctOutputs[j] = 0; 	
+	end
+	//compute the reference values
 	for(Integer j=0;j<100;j=j+1) begin
 		for(Integer k=0; k<valueOf(KERNEL_SIZE); k=k+1) begin
-			correctOutputs[j+2] = correctOutputs[j+2]+(kernel[valueOf(KERNEL_SIZE)-1-k]*operations[k]); 	
+			correctOutputs[j+valueOf(OFFSET)] = correctOutputs[j+valueOf(OFFSET)]+(kernel[valueOf(KERNEL_SIZE)-1-k]*operations[j+k]); 	
 		end
 	end
-	//print the autogenerate list
+	
 	//count the number of cycles
 	rule cycle_count;
 		cycles <= cycles + 1;
 	endrule
-
-	OneCNA nna <- mkOneCNA;
+	
+	OneCNA#(OperandType, KERNEL_SIZE) nna <- mkOneCNA;
 	rule first(isInit);
 		isInit <= False;	
-		nna.initHorizontal();	
+		nna.initHorizontal(kernel);	
 	endrule	
 	rule request(!isInit);
 		nna.request(operations[requests]);	
@@ -59,13 +66,20 @@ module mkTbOneCNA();
 	
 	rule respond(!isInit);
 		Bit#(32) outputValue <- nna.response();	
-		if(correctOutputs[requests+4] == outputValue) begin
+	//	$display("Response Produced: %d",outputValue);
+			
+		if(correctOutputs[requests] == outputValue) begin
 			$display("PASS");
 		end
-		$display("Response Produced: %d", outputValue);
+		$display("Was value ready? : %d", nna.isReady());	
+		$display("Response Produced: %d and CC: ", outputValue, requests);
+		Bit#(32) temp = correctOutputs[requests];
+		$display("Actual: %d", temp);
+
 	endrule	
 	
 	rule finish(requests==100);
+		$display("Total number of cycles needed: %d",cycles);
 		$finish(0);
 	endrule
 

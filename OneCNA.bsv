@@ -1,44 +1,41 @@
-
 package OneCNA;
 import Vector::*;
 import SpecialFIFOs::*;
 import FIFOF::*;
+typedef 4 WAIT_TIME;
 
-typedef 4 KERNEL_SIZE;
-typedef Bit#(32) OperandType;
-
-interface OneCNA;
-        method Action initHorizontal; 
-	method Action request(OperandType req);
-        method ActionValue#(OperandType) response;
+interface OneCNA#(type operandType, numeric type kernelSize);
+        method Action initHorizontal(Vector#(kernelSize, operandType) inputKernel); 
+	method  operandType isReady();	
+	method Action request(operandType req);
+        method ActionValue#(operandType) response;
 
 endinterface
-module mkOneCNA(OneCNA);
+module mkOneCNA(OneCNA#(operandType, kernelSize)) provisos (Bits#(operandType, a__), Arith#(operandType), Literal#(operandType));
 	//if initializing
 	Reg#(Bool) isInit <- mkReg(True);
-        //horizontal queue vector
-        Vector#(KERNEL_SIZE, FIFOF#(OperandType)) horizontalStream <- replicateM(mkLFIFOF);
+        
+	//how long have we waited
+	Reg#(Bit#(32)) currWait <- mkReg(0);
+	//horizontal queue vector
+        Vector#(kernelSize, FIFOF#(operandType)) horizontalStream <- replicateM(mkLFIFOF);
 		
         //depth of the adder tree
-        Integer depthSize = log2(valueOf(KERNEL_SIZE));
+        Integer depthSize = log2(valueOf(kernelSize));
        	
-	Vector#(KERNEL_SIZE, OperandType) kernel; 
-	kernel[0] = 0;
-	kernel[1] = 1;
-	kernel[2] = 2;
-	kernel[3] = 3;
+	Reg#(Vector#(kernelSize, operandType)) kernel <- mkReg(replicate(0)); 
 	
 	//tree queue vector of vectors-may seem as a waste of space but compiler will handle 
         //the optimizations
-        Vector#(TAdd#(TLog#(KERNEL_SIZE),1), Vector#(KERNEL_SIZE, FIFOF#(OperandType))) adderTree;
-        for(Integer m=0; m<=log2(valueOf(KERNEL_SIZE)); m=m+1) begin
+        Vector#(TAdd#(TLog#(kernelSize),1), Vector#(kernelSize, FIFOF#(operandType))) adderTree;
+        for(Integer m=0; m<=log2(valueOf(kernelSize)); m=m+1) begin
 		adderTree[m] <-replicateM(mkLFIFOF);
 	end
 	    
 
 
 	//construct the adder trees rules 
-       	Integer currentPower = valueOf(KERNEL_SIZE);
+       	Integer currentPower = valueOf(kernelSize);
 	Integer addRange = currentPower-2; //how far will we have to do allow a level to add all the numbers
         for(Integer i=0; i<depthSize; i=i+1) begin
             for(Integer j=0; j <= addRange; j=j+2) begin
@@ -54,9 +51,9 @@ module mkOneCNA(OneCNA);
         end 
             
         //create all of the rules needed for the top horizontal stream
-        for(Integer i=0; i<=valueOf(KERNEL_SIZE)-1; i=i+1) begin
+        for(Integer i=0; i<=valueOf(kernelSize)-1; i=i+1) begin
                 rule streamRules;
-                        if(i == valueOf(KERNEL_SIZE)-1) begin
+                        if(i == valueOf(kernelSize)-1) begin
 			    //$display("Dequeuing from FIFO: %d", i);
                             //perform multiplications needed here
                             adderTree[0][i].enq(horizontalStream[i].first()*kernel[i]); 
@@ -77,22 +74,32 @@ module mkOneCNA(OneCNA);
         end 
             
                     
-
-        //shift a new value into the currentStream every CC
-	method Action initHorizontal();
-		for(Integer i=0; i<valueOf(KERNEL_SIZE); i=i+1) begin
+	//method for initiating variables
+	method Action initHorizontal(Vector#(kernelSize, operandType) kernelInput);
+		kernel <= kernelInput;
+		for(Integer i=0; i<valueOf(kernelSize); i=i+1) begin
 			horizontalStream[i].enq(0);
 		end		
 	endmethod            
         //methods for interaction with accelerator
-	method Action request(OperandType req);
+	method operandType isReady();
+		if(currWait < fromInteger(valueOf(WAIT_TIME))) begin
+			return 0;
+		end							
+		else begin
+			return 1;
+		end	
+	endmethod	
+	method Action request(operandType req);
 		horizontalStream[0].enq(req);  
         endmethod
 
-        method ActionValue#(OperandType) response();
-                
-                adderTree[log2(valueOf(KERNEL_SIZE))][0].deq();
-                return adderTree[log2(valueOf(KERNEL_SIZE))][0].first();
+        method ActionValue#(operandType) response();
+		if(currWait != fromInteger(valueOf(WAIT_TIME))) begin
+			currWait <= currWait + 1;
+		end		                
+                adderTree[log2(valueOf(kernelSize))][0].deq();
+                return adderTree[log2(valueOf(kernelSize))][0].first();
         endmethod           
 endmodule
 endpackage
