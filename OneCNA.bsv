@@ -7,13 +7,14 @@ typedef 4 WAIT_TIME;
 interface OneCNA#(type operandType, numeric type kernelSize);
         method Action initHorizontal(Vector#(kernelSize, operandType) inputKernel); 
 	method  operandType isReady();	
+	method  operandType hasInit();	
 	method Action request(operandType req);
         method ActionValue#(operandType) response;
 
 endinterface
 module mkOneCNA(OneCNA#(operandType, kernelSize)) provisos (Bits#(operandType, a__), Arith#(operandType), Literal#(operandType));
 	//if initializing
-	Reg#(Bool) isInit <- mkReg(True);
+	Reg#(Bool) isInit <- mkReg(False);
         
 	//how long have we waited
 	Reg#(Bit#(32)) currWait <- mkReg(0);
@@ -77,6 +78,7 @@ module mkOneCNA(OneCNA#(operandType, kernelSize)) provisos (Bits#(operandType, a
 	//method for initiating variables
 	method Action initHorizontal(Vector#(kernelSize, operandType) kernelInput);
 		kernel <= kernelInput;
+		isInit <= True;	
 		for(Integer i=0; i<valueOf(kernelSize); i=i+1) begin
 			horizontalStream[i].enq(0);
 		end		
@@ -88,6 +90,14 @@ module mkOneCNA(OneCNA#(operandType, kernelSize)) provisos (Bits#(operandType, a
 		end							
 		else begin
 			return 1;
+		end	
+	endmethod	
+	method operandType hasInit();
+		if(isInit)begin
+			return 1;
+		end							
+		else begin
+			return 0;
 		end	
 	endmethod	
 	method Action request(operandType req);
